@@ -11,6 +11,8 @@ var (
 )
 
 func init() {
+	Debug = false
+
 	debugEnv, exists := os.LookupEnv("SOCKET_GO_DEBUG")
 	if exists {
 		if val, err := strconv.ParseBool(debugEnv); err == nil {

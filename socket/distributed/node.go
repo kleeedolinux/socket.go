@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 
 	"sync"
 	"sync/atomic"
@@ -487,4 +488,478 @@ func containsProcessID(pids []ProcessID, id ProcessID) bool {
 		}
 	}
 	return false
+}
+
+type ClusterNode struct {
+	ID           string
+	Address      string
+	LastSeen     time.Time
+	Load         float64
+	Capabilities map[string]int
+	mu           sync.RWMutex
+}
+
+type Cluster struct {
+	LocalNode   *Node
+	RemoteNodes map[string]*ClusterNode
+	config      ClusterConfig
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+}
+
+type ClusterConfig struct {
+	DiscoveryAddresses []string
+	HeartbeatInterval  time.Duration
+	GossipInterval     time.Duration
+	NodeCapabilities   map[string]int
+	MaxLoad            float64
+}
+
+type ProcessPriority int
+
+const (
+	LowPriority ProcessPriority = iota
+	NormalPriority
+	HighPriority
+	CriticalPriority
+)
+
+type ProcessOptions struct {
+	Priority     ProcessPriority
+	MailboxSize  int
+	Capabilities map[string]int
+}
+
+func DefaultProcessOptions() ProcessOptions {
+	return ProcessOptions{
+		Priority:     NormalPriority,
+		MailboxSize:  100,
+		Capabilities: make(map[string]int),
+	}
+}
+
+func NewCluster(localNode *Node, config ClusterConfig) *Cluster {
+	ctx, cancel := context.WithCancel(localNode.ctx)
+
+	cluster := &Cluster{
+		LocalNode:   localNode,
+		RemoteNodes: make(map[string]*ClusterNode),
+		config:      config,
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+
+	go cluster.startDiscovery()
+	go cluster.startHeartbeat()
+	go cluster.startGossip()
+	go cluster.monitorLoad()
+
+	return cluster
+}
+
+func (c *Cluster) startDiscovery() {
+	for _, addr := range c.config.DiscoveryAddresses {
+		c.discoverNode(addr)
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			for _, addr := range c.config.DiscoveryAddresses {
+				c.discoverNode(addr)
+			}
+		}
+	}
+}
+
+func (c *Cluster) discoverNode(address string) {
+
+	debug.Printf("Discovering node at %s", address)
+}
+
+func (c *Cluster) startHeartbeat() {
+	ticker := time.NewTicker(c.config.HeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.sendHeartbeats()
+			c.checkNodeLiveness()
+		}
+	}
+}
+
+func (c *Cluster) sendHeartbeats() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for _, node := range c.RemoteNodes {
+		go func(n *ClusterNode) {
+
+			debug.Printf("Sending heartbeat to node %s", n.ID)
+		}(node)
+	}
+}
+
+func (c *Cluster) checkNodeLiveness() {
+	threshold := time.Now().Add(-3 * c.config.HeartbeatInterval)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for id, node := range c.RemoteNodes {
+		node.mu.RLock()
+		lastSeen := node.LastSeen
+		node.mu.RUnlock()
+
+		if lastSeen.Before(threshold) {
+			debug.Printf("Node %s appears to be down, removing from cluster", id)
+			delete(c.RemoteNodes, id)
+		}
+	}
+}
+
+func (c *Cluster) startGossip() {
+	ticker := time.NewTicker(c.config.GossipInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.gossipClusterState()
+		}
+	}
+}
+
+func (c *Cluster) gossipClusterState() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	debug.Printf("Gossiping cluster state to peers")
+}
+
+func (c *Cluster) monitorLoad() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+
+			c.updateLocalLoad()
+		}
+	}
+}
+
+func (c *Cluster) updateLocalLoad() {
+
+	debug.Printf("Updating local node load")
+}
+
+func (n *Node) SpawnProcessWithOptions(function ProcessFunc, opts ProcessOptions) (ProcessID, error) {
+	return n.SpawnProcessWithIDAndOptions(n.generateProcessID(), function, opts)
+}
+
+func (n *Node) SpawnProcessWithIDAndOptions(id ProcessID, function ProcessFunc, opts ProcessOptions) (ProcessID, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.ctx.Err() != nil {
+		return "", ErrNodeStopped
+	}
+
+	ctx, cancel := context.WithCancel(n.ctx)
+
+	mailboxSize := 100
+	if opts.MailboxSize > 0 {
+		mailboxSize = opts.MailboxSize
+	}
+
+	process := &Process{
+		ID:       id,
+		Function: function,
+		mailbox:  make(chan interface{}, mailboxSize),
+		ctx:      ctx,
+		cancel:   cancel,
+		node:     n,
+	}
+	process.alive.Store(true)
+
+	n.processes[id] = process
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-process.mailbox:
+				if err := function(ctx, id, n, msg); err != nil {
+					debug.Printf("Process %s error: %v", id, err)
+				}
+			}
+		}
+	}()
+
+	return id, nil
+}
+
+func (c *Cluster) RemoteCall(nodeID string, to ProcessID, message interface{}) error {
+	c.mu.RLock()
+	_, exists := c.RemoteNodes[nodeID]
+	c.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("node %s not found in cluster", nodeID)
+	}
+
+	debug.Printf("Remote call to %s on node %s", to, nodeID)
+	return nil
+}
+
+func (c *Cluster) BroadcastMessage(to ProcessID, message interface{}) map[string]error {
+	c.mu.RLock()
+	nodes := make(map[string]*ClusterNode, len(c.RemoteNodes))
+	for id, node := range c.RemoteNodes {
+		nodes[id] = node
+	}
+	c.mu.RUnlock()
+
+	results := make(map[string]error)
+	var wg sync.WaitGroup
+
+	for id := range nodes {
+		wg.Add(1)
+		go func(nodeID string) {
+			defer wg.Done()
+			err := c.RemoteCall(nodeID, to, message)
+			if err != nil {
+				results[nodeID] = err
+			}
+		}(id)
+	}
+
+	wg.Wait()
+	return results
+}
+
+type DistributedSupervisorSpec struct {
+	ID              ProcessID
+	Strategy        SupervisorStrategy
+	MaxRestarts     int
+	RestartPeriod   time.Duration
+	LocalProcesses  []ProcessSpec
+	RemoteProcesses map[string][]ProcessSpec
+}
+
+func NewDistributedSupervisor(spec DistributedSupervisorSpec, cluster *Cluster) error {
+
+	localSpec := SupervisorSpec{
+		ID:            spec.ID,
+		Strategy:      spec.Strategy,
+		MaxRestarts:   spec.MaxRestarts,
+		RestartPeriod: spec.RestartPeriod,
+		Processes:     spec.LocalProcesses,
+	}
+
+	_, err := NewSupervisor(localSpec, cluster.LocalNode)
+	if err != nil {
+		return err
+	}
+
+	for nodeID, processes := range spec.RemoteProcesses {
+		cluster.mu.RLock()
+		_, exists := cluster.RemoteNodes[nodeID]
+		cluster.mu.RUnlock()
+
+		if !exists {
+			return fmt.Errorf("node %s not found in cluster", nodeID)
+		}
+
+		debug.Printf("Creating remote supervisor on node %s with %d processes", nodeID, len(processes))
+	}
+
+	return nil
+}
+
+type LoadBalancedProcessGroup struct {
+	ID          string
+	cluster     *Cluster
+	processList []struct {
+		nodeID    string
+		processID ProcessID
+		weight    int
+	}
+	mu        sync.RWMutex
+	strategy  LoadBalancingStrategy
+	nextIndex int
+}
+
+type LoadBalancingStrategy int
+
+const (
+	RoundRobin LoadBalancingStrategy = iota
+	WeightedRoundRobin
+	LeastConnections
+)
+
+func (c *Cluster) NewLoadBalancedGroup(id string, strategy LoadBalancingStrategy) *LoadBalancedProcessGroup {
+	return &LoadBalancedProcessGroup{
+		ID:      id,
+		cluster: c,
+		processList: make([]struct {
+			nodeID    string
+			processID ProcessID
+			weight    int
+		}, 0),
+		strategy:  strategy,
+		nextIndex: 0,
+	}
+}
+
+func (g *LoadBalancedProcessGroup) AddProcess(nodeID string, processID ProcessID, weight int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.processList = append(g.processList, struct {
+		nodeID    string
+		processID ProcessID
+		weight    int
+	}{
+		nodeID:    nodeID,
+		processID: processID,
+		weight:    weight,
+	})
+}
+
+func (g *LoadBalancedProcessGroup) RemoveProcess(nodeID string, processID ProcessID) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	for i, proc := range g.processList {
+		if proc.nodeID == nodeID && proc.processID == processID {
+			g.processList = append(g.processList[:i], g.processList[i+1:]...)
+			break
+		}
+	}
+}
+
+func (g *LoadBalancedProcessGroup) Send(message interface{}) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if len(g.processList) == 0 {
+		return errors.New("no processes available in load balanced group")
+	}
+
+	var target struct {
+		nodeID    string
+		processID ProcessID
+		weight    int
+	}
+
+	switch g.strategy {
+	case RoundRobin:
+		target = g.processList[g.nextIndex]
+		g.nextIndex = (g.nextIndex + 1) % len(g.processList)
+
+	case WeightedRoundRobin:
+
+		totalWeight := 0
+		for _, proc := range g.processList {
+			totalWeight += proc.weight
+		}
+
+		if totalWeight <= 0 {
+			target = g.processList[g.nextIndex]
+			g.nextIndex = (g.nextIndex + 1) % len(g.processList)
+		} else {
+
+			selection := rand.Intn(totalWeight)
+			runningTotal := 0
+
+			for _, proc := range g.processList {
+				runningTotal += proc.weight
+				if selection < runningTotal {
+					target = proc
+					break
+				}
+			}
+		}
+
+	case LeastConnections:
+
+		target = g.processList[0]
+	}
+
+	if target.nodeID == g.cluster.LocalNode.name {
+		return g.cluster.LocalNode.Send(target.processID, message)
+	} else {
+		return g.cluster.RemoteCall(target.nodeID, target.processID, message)
+	}
+}
+
+type ProcessStats struct {
+	ProcessID       ProcessID
+	MessagesTotal   int64
+	MessagesPerSec  float64
+	AvgProcessingMs float64
+	ErrorCount      int64
+	LastActive      time.Time
+}
+
+func (n *Node) GetProcessStats(id ProcessID) (ProcessStats, error) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	_, exists := n.processes[id]
+	if !exists {
+		return ProcessStats{}, ErrProcessNotFound
+	}
+
+	return ProcessStats{
+		ProcessID:       id,
+		MessagesTotal:   0,
+		MessagesPerSec:  0,
+		AvgProcessingMs: 0,
+		ErrorCount:      0,
+		LastActive:      time.Now(),
+	}, nil
+}
+
+type SystemEvent struct {
+	Type      SystemEventType
+	Timestamp time.Time
+	ProcessID ProcessID
+	NodeID    string
+	Error     error
+}
+
+type SystemEventType int
+
+const (
+	ProcessStarted SystemEventType = iota
+	ProcessTerminated
+	NodeJoined
+	NodeLeft
+	SupervisorRestarting
+)
+
+type SystemEventHandler func(event SystemEvent)
+
+func (n *Node) Monitor(handler SystemEventHandler) {
+
+	debug.Printf("Registered system event handler")
 }
