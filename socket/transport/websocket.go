@@ -3,10 +3,12 @@ package transport
 import (
 	"context"
 	"errors"
-	"log"
+
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/kleeedolinux/socket.go/debug"
 
 	"github.com/gorilla/websocket"
 )
@@ -74,7 +76,7 @@ func (t *WebSocketTransport) Connect(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("WebSocketTransport: Connecting to %s", t.url)
+	debug.Printf("WebSocketTransport: Connecting to %s", t.url)
 
 	dialer := *t.dialer
 	dialer.HandshakeTimeout = 10 * time.Second
@@ -85,11 +87,11 @@ func (t *WebSocketTransport) Connect(ctx context.Context) error {
 
 	conn, _, err := dialer.DialContext(ctx, t.url, t.headers)
 	if err != nil {
-		log.Printf("WebSocketTransport: Connection failed: %v", err)
+		debug.Printf("WebSocketTransport: Connection failed: %v", err)
 		return err
 	}
 
-	log.Printf("WebSocketTransport: Connected successfully")
+	debug.Printf("WebSocketTransport: Connected successfully")
 	t.conn = conn
 	t.connected = true
 
@@ -106,15 +108,15 @@ func (t *WebSocketTransport) Send(data []byte) error {
 
 	if t.writeTimeout > 0 {
 		if err := t.conn.SetWriteDeadline(time.Now().Add(t.writeTimeout)); err != nil {
-			log.Printf("WebSocketTransport: Error setting write deadline: %v", err)
+			debug.Printf("WebSocketTransport: Error setting write deadline: %v", err)
 			return err
 		}
 	}
 
-	log.Printf("WebSocketTransport: Sending data: %s", string(data))
+	debug.Printf("WebSocketTransport: Sending data: %s", string(data))
 	err := t.conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
-		log.Printf("WebSocketTransport: Send error: %v", err)
+		debug.Printf("WebSocketTransport: Send error: %v", err)
 	}
 	return err
 }
@@ -129,7 +131,7 @@ func (t *WebSocketTransport) Receive() ([]byte, error) {
 	if t.readTimeout > 0 {
 		if err := t.conn.SetReadDeadline(time.Now().Add(t.readTimeout)); err != nil {
 			t.mu.Unlock()
-			log.Printf("WebSocketTransport: Error setting read deadline: %v", err)
+			debug.Printf("WebSocketTransport: Error setting read deadline: %v", err)
 			return nil, err
 		}
 	}
@@ -137,11 +139,11 @@ func (t *WebSocketTransport) Receive() ([]byte, error) {
 
 	_, message, err := t.conn.ReadMessage()
 	if err != nil {
-		log.Printf("WebSocketTransport: Read error: %v", err)
+		debug.Printf("WebSocketTransport: Read error: %v", err)
 		return nil, err
 	}
 
-	log.Printf("WebSocketTransport: Received data: %s", string(message))
+	debug.Printf("WebSocketTransport: Received data: %s", string(message))
 	return message, nil
 }
 
@@ -153,7 +155,7 @@ func (t *WebSocketTransport) Close() error {
 		return nil
 	}
 
-	log.Printf("WebSocketTransport: Closing connection")
+	debug.Printf("WebSocketTransport: Closing connection")
 
 	err := t.conn.WriteControl(
 		websocket.CloseMessage,
@@ -161,13 +163,13 @@ func (t *WebSocketTransport) Close() error {
 		time.Now().Add(time.Second),
 	)
 	if err != nil {
-		log.Printf("WebSocketTransport: Error sending close message: %v", err)
+		debug.Printf("WebSocketTransport: Error sending close message: %v", err)
 
 	}
 
 	err = t.conn.Close()
 	if err != nil {
-		log.Printf("WebSocketTransport: Error closing connection: %v", err)
+		debug.Printf("WebSocketTransport: Error closing connection: %v", err)
 	}
 
 	t.connected = false

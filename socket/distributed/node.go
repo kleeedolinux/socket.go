@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/kleeedolinux/socket.go/debug"
 
 	"github.com/kleeedolinux/socket.go/socket"
 )
@@ -204,7 +206,7 @@ func (n *Node) SpawnProcessWithID(id ProcessID, function ProcessFunc) (ProcessID
 				return
 			case msg := <-process.mailbox:
 				if err := function(ctx, id, n, msg); err != nil {
-					log.Printf("Process %s error: %v", id, err)
+					debug.Printf("Process %s error: %v", id, err)
 				}
 			}
 		}
@@ -422,7 +424,7 @@ func (s *Supervisor) restartProcess(id ProcessID) {
 	}
 
 	if tracker.count >= s.MaxRestarts && s.MaxRestarts > 0 {
-		log.Printf("Supervisor %s: Max restarts exceeded for process %s", s.ID, id)
+		debug.Printf("Supervisor %s: Max restarts exceeded for process %s", s.ID, id)
 		return
 	}
 
@@ -465,7 +467,7 @@ func (s *Supervisor) restartProcess(id ProcessID) {
 				return
 			case msg := <-process.mailbox:
 				if err := procSpec.Function(ctx, id, s.node, msg); err != nil {
-					log.Printf("Process %s error: %v", id, err)
+					debug.Printf("Process %s error: %v", id, err)
 				}
 			}
 		}
@@ -474,7 +476,7 @@ func (s *Supervisor) restartProcess(id ProcessID) {
 	tracker.count++
 	tracker.lastTime = now
 
-	log.Printf("Supervisor %s: Restarted process %s (count: %d/%d)",
+	debug.Printf("Supervisor %s: Restarted process %s (count: %d/%d)",
 		s.ID, id, tracker.count, s.MaxRestarts)
 }
 

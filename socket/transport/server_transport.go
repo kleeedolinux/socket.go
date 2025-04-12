@@ -3,29 +3,25 @@ package transport
 import (
 	"encoding/json"
 	"io"
-	"log"
+
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/kleeedolinux/socket.go/debug"
+
 	"github.com/gorilla/websocket"
 )
 
-
 type ServerTransport interface {
-	
 	Read() ([]byte, error)
 
-	
 	Write([]byte) error
 
-	
 	Close() error
 
-	
 	ID() string
 }
-
 
 type WebSocketServerTransport struct {
 	id           string
@@ -38,13 +34,11 @@ type WebSocketServerTransport struct {
 	closed       bool
 }
 
-
 type WebSocketServerConfig struct {
 	WriteTimeout time.Duration
 	ReadTimeout  time.Duration
 	BufferSize   int
 }
-
 
 func DefaultWebSocketServerConfig() WebSocketServerConfig {
 	return WebSocketServerConfig{
@@ -53,7 +47,6 @@ func DefaultWebSocketServerConfig() WebSocketServerConfig {
 		BufferSize:   100,
 	}
 }
-
 
 func NewWebSocketServerTransport(id string, conn *websocket.Conn, config WebSocketServerConfig) *WebSocketServerTransport {
 	t := &WebSocketServerTransport{
@@ -64,18 +57,15 @@ func NewWebSocketServerTransport(id string, conn *websocket.Conn, config WebSock
 		writeTimeout: config.WriteTimeout,
 	}
 
-	
 	if config.ReadTimeout > 0 {
 		conn.SetReadDeadline(time.Now().Add(config.ReadTimeout))
 	}
 
-	
 	t.writeWg.Add(1)
 	go t.writePump()
 
 	return t
 }
-
 
 func (t *WebSocketServerTransport) writePump() {
 	defer t.writeWg.Done()
@@ -99,7 +89,7 @@ func (t *WebSocketServerTransport) writePump() {
 			t.mu.Unlock()
 
 			if err != nil {
-				
+
 				t.Close()
 				return
 			}
@@ -107,20 +97,18 @@ func (t *WebSocketServerTransport) writePump() {
 	}
 }
 
-
 func (t *WebSocketServerTransport) Read() ([]byte, error) {
-	log.Printf("WebSocketServerTransport %s: Reading message", t.id)
+	debug.Printf("WebSocketServerTransport %s: Reading message", t.id)
 	_, message, err := t.conn.ReadMessage()
 	if err != nil {
-		log.Printf("WebSocketServerTransport %s: Error reading message: %v", t.id, err)
+		debug.Printf("WebSocketServerTransport %s: Error reading message: %v", t.id, err)
 		t.Close()
 		return nil, err
 	}
 
-	log.Printf("WebSocketServerTransport %s: Received message: %s", t.id, string(message))
+	debug.Printf("WebSocketServerTransport %s: Received message: %s", t.id, string(message))
 	return message, nil
 }
-
 
 func (t *WebSocketServerTransport) Write(data []byte) error {
 	t.mu.Lock()
@@ -128,23 +116,22 @@ func (t *WebSocketServerTransport) Write(data []byte) error {
 	t.mu.Unlock()
 
 	if closed {
-		log.Printf("WebSocketServerTransport %s: Attempted to write to closed transport", t.id)
+		debug.Printf("WebSocketServerTransport %s: Attempted to write to closed transport", t.id)
 		return nil
 	}
 
-	log.Printf("WebSocketServerTransport %s: Sending message: %s", t.id, string(data))
+	debug.Printf("WebSocketServerTransport %s: Sending message: %s", t.id, string(data))
 
 	select {
 	case t.sendCh <- data:
 		return nil
 	default:
-		
-		log.Printf("WebSocketServerTransport %s: Send buffer full, closing connection", t.id)
+
+		debug.Printf("WebSocketServerTransport %s: Send buffer full, closing connection", t.id)
 		t.Close()
 		return nil
 	}
 }
-
 
 func (t *WebSocketServerTransport) Close() error {
 	t.mu.Lock()
@@ -157,7 +144,6 @@ func (t *WebSocketServerTransport) Close() error {
 	close(t.closeCh)
 	t.mu.Unlock()
 
-	
 	t.conn.WriteControl(
 		websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
@@ -168,11 +154,9 @@ func (t *WebSocketServerTransport) Close() error {
 	return t.conn.Close()
 }
 
-
 func (t *WebSocketServerTransport) ID() string {
 	return t.id
 }
-
 
 type LongPollingServerTransport struct {
 	id                string
@@ -184,12 +168,10 @@ type LongPollingServerTransport struct {
 	disconnectTimeout time.Duration
 }
 
-
 type LongPollingServerConfig struct {
 	DisconnectTimeout time.Duration
 	BufferSize        int
 }
-
 
 func DefaultLongPollingServerConfig() LongPollingServerConfig {
 	return LongPollingServerConfig{
@@ -197,7 +179,6 @@ func DefaultLongPollingServerConfig() LongPollingServerConfig {
 		BufferSize:        100,
 	}
 }
-
 
 func NewLongPollingServerTransport(id string, config LongPollingServerConfig) *LongPollingServerTransport {
 	return &LongPollingServerTransport{
@@ -209,14 +190,12 @@ func NewLongPollingServerTransport(id string, config LongPollingServerConfig) *L
 	}
 }
 
-
 func (t *LongPollingServerTransport) Read() ([]byte, error) {
 	select {
 	case msg := <-t.incomingMessages:
 		return msg, nil
 	}
 }
-
 
 func (t *LongPollingServerTransport) Write(data []byte) error {
 	t.mu.Lock()
@@ -230,7 +209,6 @@ func (t *LongPollingServerTransport) Write(data []byte) error {
 	return nil
 }
 
-
 func (t *LongPollingServerTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -239,11 +217,9 @@ func (t *LongPollingServerTransport) Close() error {
 	return nil
 }
 
-
 func (t *LongPollingServerTransport) ID() string {
 	return t.id
 }
-
 
 func (t *LongPollingServerTransport) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	t.mu.Lock()
@@ -254,20 +230,16 @@ func (t *LongPollingServerTransport) HandlePoll(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	
 	t.lastActivity = time.Now()
 
-	
 	messages := t.pendingMessages
 	t.pendingMessages = make([][]byte, 0)
 
 	t.mu.Unlock()
 
-	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
 }
-
 
 func (t *LongPollingServerTransport) HandleSend(w http.ResponseWriter, r *http.Request) {
 	t.mu.Lock()
@@ -278,11 +250,9 @@ func (t *LongPollingServerTransport) HandleSend(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	
 	t.lastActivity = time.Now()
 	t.mu.Unlock()
 
-	
 	defer r.Body.Close()
 
 	data, err := io.ReadAll(r.Body)
@@ -291,7 +261,6 @@ func (t *LongPollingServerTransport) HandleSend(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	
 	select {
 	case t.incomingMessages <- data:
 		w.WriteHeader(http.StatusOK)
@@ -299,7 +268,6 @@ func (t *LongPollingServerTransport) HandleSend(w http.ResponseWriter, r *http.R
 		http.Error(w, "Message queue full", http.StatusServiceUnavailable)
 	}
 }
-
 
 func (t *LongPollingServerTransport) IsExpired() bool {
 	t.mu.Lock()
@@ -312,12 +280,11 @@ func (t *LongPollingServerTransport) IsExpired() bool {
 	return time.Since(t.lastActivity) > t.disconnectTimeout
 }
 
-
 var Upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		
+
 		return true
 	},
 }

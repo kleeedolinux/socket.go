@@ -2,10 +2,12 @@ package socket
 
 import (
 	"context"
-	"log"
+
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/kleeedolinux/socket.go/debug"
 
 	"github.com/kleeedolinux/socket.go/socket/transport"
 )
@@ -146,7 +148,7 @@ func (s *Server) tryWebSocketUpgrade(w http.ResponseWriter, r *http.Request) Soc
 
 	conn, err := upgraderConfig.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade failed: %v", err)
+		debug.Printf("WebSocket upgrade failed: %v", err)
 		return nil
 	}
 
@@ -262,14 +264,14 @@ func (s *Server) registerSocketAndWaitForDisconnect(socket Socket) {
 
 	<-disconnectChan
 
-	log.Printf("Socket %s disconnected, cleaning up", socket.ID())
+	debug.Printf("Socket %s disconnected, cleaning up", socket.ID())
 }
 
 func (s *Server) HandleFunc(event Event, handler func(s Socket, data interface{})) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Printf("Server: Registering handler for event: %s", event)
+	debug.Printf("Server: Registering handler for event: %s", event)
 	s.handlers[event] = append(s.handlers[event], handler)
 }
 
@@ -279,7 +281,7 @@ func (s *Server) handleSocket(socket Socket) {
 	s.sockets[socket.ID()] = socket
 	s.mu.Unlock()
 
-	log.Printf("Server: Adding socket %s", socket.ID())
+	debug.Printf("Server: Adding socket %s", socket.ID())
 
 	s.mu.RLock()
 	events := make([]Event, 0, len(s.handlers))
@@ -294,10 +296,10 @@ func (s *Server) handleSocket(socket Socket) {
 
 		currentEvent := event
 
-		log.Printf("Server: Registering handler on socket %s for event %s", socket.ID(), currentEvent)
+		debug.Printf("Server: Registering handler on socket %s for event %s", socket.ID(), currentEvent)
 
 		socket.On(currentEvent, func(data interface{}) {
-			log.Printf("Server: Socket %s received event %s", socket.ID(), currentEvent)
+			debug.Printf("Server: Socket %s received event %s", socket.ID(), currentEvent)
 
 			s.mu.RLock()
 			handlers := s.handlers[currentEvent]
@@ -310,7 +312,7 @@ func (s *Server) handleSocket(socket Socket) {
 	}
 
 	socket.On(EventDisconnect, func(data interface{}) {
-		log.Printf("Server: Socket %s disconnected", socket.ID())
+		debug.Printf("Server: Socket %s disconnected", socket.ID())
 
 		s.mu.Lock()
 		delete(s.sockets, socket.ID())
@@ -329,7 +331,7 @@ func (s *Server) triggerEvent(socket Socket, event Event, data interface{}) {
 	handlers := s.handlers[event]
 	s.mu.RUnlock()
 
-	log.Printf("Server: Triggering event %s for socket %s with %d handlers",
+	debug.Printf("Server: Triggering event %s for socket %s with %d handlers",
 		event, socket.ID(), len(handlers))
 
 	for _, handler := range handlers {
@@ -346,10 +348,10 @@ func (s *Server) Broadcast(event Event, data interface{}) {
 	s.mu.RUnlock()
 
 	socketCount := len(socketsCopy)
-	log.Printf("Server: Broadcasting event %s to %d clients", event, socketCount)
+	debug.Printf("Server: Broadcasting event %s to %d clients", event, socketCount)
 
 	if socketCount == 0 {
-		log.Printf("Server: No sockets connected, broadcast has no effect")
+		debug.Printf("Server: No sockets connected, broadcast has no effect")
 		return
 	}
 
@@ -358,7 +360,7 @@ func (s *Server) Broadcast(event Event, data interface{}) {
 		go func(s Socket) {
 			err := s.Send(event, data)
 			if err != nil {
-				log.Printf("Server: Error broadcasting to client %s: %v", s.ID(), err)
+				debug.Printf("Server: Error broadcasting to client %s: %v", s.ID(), err)
 			}
 		}(socket)
 	}
@@ -373,10 +375,10 @@ func (s *Server) BroadcastParallel(event Event, data interface{}) {
 	s.mu.RUnlock()
 
 	socketCount := len(socketsCopy)
-	log.Printf("Server: Broadcasting event %s to %d clients in parallel", event, socketCount)
+	debug.Printf("Server: Broadcasting event %s to %d clients in parallel", event, socketCount)
 
 	if socketCount == 0 {
-		log.Printf("Server: No sockets connected, broadcast has no effect")
+		debug.Printf("Server: No sockets connected, broadcast has no effect")
 		return
 	}
 
@@ -391,7 +393,7 @@ func (s *Server) BroadcastParallel(event Event, data interface{}) {
 			for socket := range jobs {
 				err := socket.Send(event, data)
 				if err != nil {
-					log.Printf("Server: Error broadcasting to client %s: %v", socket.ID(), err)
+					debug.Printf("Server: Error broadcasting to client %s: %v", socket.ID(), err)
 				}
 			}
 		}()
@@ -439,7 +441,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	for _, socket := range sockets {
 		if err := socket.Close(); err != nil {
-			log.Printf("Error closing socket %s: %v", socket.ID(), err)
+			debug.Printf("Error closing socket %s: %v", socket.ID(), err)
 		}
 	}
 
@@ -472,7 +474,6 @@ func (s *Server) In(room string) []Socket {
 	r := s.roomManager.GetRoom(room)
 	return r.GetSockets()
 }
-
 
 func (s *Server) GetSocket(id string) (Socket, bool) {
 	s.mu.RLock()
