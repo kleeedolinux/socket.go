@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Go Socket Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        #input-form {
+            display: flex;
+        }
+        #message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px 0 0 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 0 4px 4px 0;
+            cursor: pointer;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .user-message {
+            background-color: #e6f7ff;
+        }
+        .system-message {
+            background-color: #f0f0f0;
+            font-style: italic;
+        }
+        .error-message {
+            background-color: #ffebee;
+            color: #d32f2f;
+        }
+        .time {
+            font-size: 0.8em;
+            color: #888;
+        }
+        .username {
+            font-weight: bold;
+        }
+        #status {
+            text-align: center;
+            padding: 10px;
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Connecting...</div>
+    <div id="chat-container">
+        <div id="messages"></div>
+        <form id="input-form">
+            <input type="text" id="username-input" placeholder="Your name" required style="flex: 0.3; margin-right: 10px; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
+            <input type="text" id="message-input" placeholder="Type your message..." required>
+            <button type="submit">Send</button>
+        </form>
+    </div>
+
+    <script>
+        
+        class SocketClient {
+            constructor(url) {
+                this.url = url;
+                this.connected = false;
+                this.handlers = {};
+                this.reconnectDelay = 1000;
+                this.maxReconnectDelay = 30000;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 10;
+                this.ws = null;
+                this.manualClose = false;
+                
+                
+                this.connectWebSocket();
+                
+                
+                this.pingInterval = setInterval(() => {
+                    this.ping();
+                }, 20000); 
+            }
+            
+            ping() {
+                if (this.connected && this.ws) {
+                    try {
+                        
+                        this.send('ping', { time: Date.now() });
+                        console.log("Ping sent");
+                    } catch (err) {
+                        console.error("Error sending ping:", err);
+                    }
+                }
+            }
+
+            connectWebSocket() {
+                try {
+                    console.log("Connecting to WebSocket...");
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = protocol + '//' + window.location.host + this.url;
+                    console.log("WebSocket URL:", wsUrl);
+                    
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log("WebSocket connection opened");
+                        this.connected = true;
+                        this.reconnectDelay = 1000;
+                        this.reconnectAttempts = 0;
+                        this.triggerEvent('connect', null);
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        console.log("WebSocket message received:", event.data);
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.triggerEvent(message.event, message.data);
+                        } catch (err) {
+                            console.error("Error parsing message:", err);
+                            this.triggerEvent('error', { error: 'Invalid message format' });
+                        }
+                    };
+                    
+                    this.ws.onclose = (event) => {
+                        console.log("WebSocket connection closed:", event);
+                        this.connected = false;
+                        this.triggerEvent('disconnect', null);
+                        
+                        if (!this.manualClose) {
+                            this.reconnect();
+                        }
+                    };
+                    
+                    this.ws.onerror = (err) => {
+                        console.error("WebSocket error:", err);
+                        
+                        if (!this.connected) {
+                            console.log('WebSocket not available, falling back to long polling');
+                            this.connectLongPolling();
+                        } else {
+                            this.triggerEvent('error', err);
+                        }
+                    };
+                } catch (err) {
+                    console.error("Error creating WebSocket:", err);
+                    
+                    console.log('WebSocket not available, falling back to long polling');
+                    this.connectLongPolling();
+                }
+            }
+
+            connectLongPolling() {
+                
+                
+                console.log("Falling back to long polling");
+                this.addSystemMessage("WebSocket not available. Switching to long polling...");
+            }
+            
+            addSystemMessage(message) {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message system-message';
+                msgDiv.innerHTML = '<span class="username">System:</span> ' + message;
+                document.getElementById('messages').appendChild(msgDiv);
+            }
+            
+            reconnect() {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    console.log("Max reconnect attempts reached");
+                    this.addSystemMessage("Max reconnection attempts reached. Please refresh the page.");
+                    return;
+                }
+                
+                console.log(`Reconnecting in ${this.reconnectDelay}ms...`);
+                
+                setTimeout(() => {
+                    this.reconnectAttempts++;
+                    console.log(`Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+                    this.connectWebSocket();
+                    
+                    
+                    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
+                }, this.reconnectDelay);
+            }
+            
+            on(event, handler) {
+                if (!this.handlers[event]) {
+                    this.handlers[event] = [];
+                }
+                this.handlers[event].push(handler);
+            }
+            
+            off(event) {
+                delete this.handlers[event];
+            }
+            
+            send(event, data) {
+                if (!this.connected || !this.ws) {
+                    console.error("Cannot send message: not connected");
+                    return false;
+                }
+                
+                try {
+                    const message = JSON.stringify({
+                        event: event,
+                        data: data
+                    });
+                    
+                    console.log("Sending message:", message);
+                    this.ws.send(message);
+                    return true;
+                } catch (err) {
+                    console.error("Error sending message:", err);
+                    this.triggerEvent('error', { error: 'Failed to send message' });
+                    return false;
+                }
+            }
+            
+            triggerEvent(event, data) {
+                console.log("Event triggered:", event, data);
+                if (this.handlers[event]) {
+                    this.handlers[event].forEach(handler => handler(data));
+                }
+            }
+            
+            close() {
+                this.manualClose = true;
+                clearInterval(this.pingInterval);
+                
+                if (this.ws) {
+                    this.ws.close();
+                }
+            }
+        }
+
+        
+        const socket = new SocketClient('/socket');
+        
+        
+        const messagesDiv = document.getElementById('messages');
+        const inputForm = document.getElementById('input-form');
+        const messageInput = document.getElementById('message-input');
+        const usernameInput = document.getElementById('username-input');
+        const statusDiv = document.getElementById('status');
+        
+        
+        inputForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const message = messageInput.value.trim();
+            const username = usernameInput.value.trim() || 'Anonymous';
+            
+            if (message && socket.connected) {
+                console.log("Sending chat message:", message);
+                const success = socket.send('chat', {
+                    username: username,
+                    message: message,
+                    time: Math.floor(Date.now() / 1000)
+                });
+                
+                if (success) {
+                    messageInput.value = '';
+                } else {
+                    addErrorMessage("Failed to send message. Please try again.");
+                }
+            } else if (!socket.connected) {
+                addErrorMessage("Cannot send message: not connected to server");
+            }
+        });
+        
+        
+        socket.on('connect', () => {
+            console.log("Connected to server");
+            statusDiv.textContent = 'Connected';
+            statusDiv.style.backgroundColor = '#d4edda';
+        });
+        
+        socket.on('disconnect', () => {
+            console.log("Disconnected from server");
+            statusDiv.textContent = 'Disconnected. Trying to reconnect...';
+            statusDiv.style.backgroundColor = '#f8d7da';
+        });
+        
+        socket.on('chat', (data) => {
+            console.log("Chat message received:", data);
+            addMessage(data, 'user-message');
+        });
+        
+        socket.on('system', (data) => {
+            console.log("System message received:", data);
+            addSystemMessage(data);
+        });
+        
+        socket.on('error', (data) => {
+            console.error("Socket error:", data);
+            addErrorMessage("Error: " + (data.error || "Unknown error"));
+        });
+        
+        socket.on('ping', (data) => {
+            console.log("Ping response received:", data);
+            
+        });
+        
+        
+        function addMessage(data, className) {
+            try {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message ' + className;
+                
+                let timestamp = Date.now();
+                if (data.time) {
+                    timestamp = data.time * 1000;
+                }
+                
+                const time = new Date(timestamp).toLocaleTimeString();
+                
+                msgDiv.innerHTML = 
+                    '<span class="username">' + (data.username || 'Anonymous') + ':</span> ' +
+                    data.message +
+                    '<span class="time">' + time + '</span>';
+                
+                messagesDiv.appendChild(msgDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch (err) {
+                console.error("Error adding message to UI:", err);
+            }
+        }
+        
+        
+        function addSystemMessage(data) {
+            try {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message system-message';
+                
+                msgDiv.innerHTML = 
+                    '<span class="username">System:</span> ' +
+                    data.message +
+                    '<span class="time">(' + data.online + ' online)</span>';
+                
+                messagesDiv.appendChild(msgDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch (err) {
+                console.error("Error adding system message to UI:", err);
+            }
+        }
+        
+        
+        function addErrorMessage(message) {
+            try {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message error-message';
+                
+                msgDiv.innerHTML = 
+                    '<span class="username">Error:</span> ' +
+                    message;
+                
+                messagesDiv.appendChild(msgDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch (err) {
+                console.error("Error adding error message to UI:", err);
+            }
+        }
+        
+        
+        window.addEventListener('beforeunload', () => {
+            socket.close();
+        });
+    </script>
+</body>
+</html> 
