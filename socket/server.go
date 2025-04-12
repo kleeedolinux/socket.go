@@ -472,3 +472,12 @@ func (s *Server) In(room string) []Socket {
 	r := s.roomManager.GetRoom(room)
 	return r.GetSockets()
 }
+
+
+func (s *Server) GetSocket(id string) (Socket, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	socket, exists := s.sockets[id]
+	return socket, exists
+}

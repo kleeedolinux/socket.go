@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Distributed Chat</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #messages { height: 300px; border: 1px solid #ddd; overflow-y: scroll; margin-bottom: 10px; padding: 10px; }
+        #rooms { width: 200px; float: left; margin-right: 20px; border: 1px solid #ddd; padding: 10px; }
+        #chatArea { margin-left: 220px; }
+        input[type="text"] { padding: 5px; width: calc(100% - 80px); }
+        button { padding: 5px 10px; }
+        .system { color: #888; font-style: italic; }
+        .timestamp { color: #999; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+    <h1>Distributed Chat</h1>
+    
+    <div id="rooms">
+        <h3>Rooms</h3>
+        <ul id="roomList"></ul>
+        <div>
+            <input type="text" id="newRoom" placeholder="New room name">
+            <button id="createRoom">Create</button>
+        </div>
+    </div>
+    
+    <div id="chatArea">
+        <h3 id="currentRoom">Not in a room</h3>
+        <div id="messages"></div>
+        
+        <div>
+            <input type="text" id="username" placeholder="Your name" value="User">
+            <input type="text" id="message" placeholder="Type a message..." disabled>
+            <button id="send" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = new WebSocket('ws://' + window.location.host + '/socket');
+            let currentRoom = null;
+            
+            socket.onopen = function() {
+                console.log('Connected to server');
+                
+                socket.send(JSON.stringify({
+                    event: 'get_rooms'
+                }));
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('Received:', data);
+                
+                switch(data.event) {
+                    case 'rooms':
+                        updateRoomList(data.data);
+                        break;
+                    case 'chat':
+                        addMessage(data.data);
+                        break;
+                    case 'system':
+                        addSystemMessage(data.data.message);
+                        break;
+                    case 'room_history':
+                        showRoomHistory(data.data);
+                        break;
+                }
+            };
+            
+            socket.onclose = function() {
+                console.log('Disconnected from server');
+                addSystemMessage('Disconnected from server');
+            };
+            
+            function updateRoomList(rooms) {
+                const list = document.getElementById('roomList');
+                list.innerHTML = '';
+                
+                if (rooms.length === 0) {
+                    const li = document.createElement('li');
+                    li.textContent = 'No rooms available';
+                    list.appendChild(li);
+                    return;
+                }
+                
+                rooms.forEach(room => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = '#';
+                    a.textContent = room;
+                    a.onclick = function(e) {
+                        e.preventDefault();
+                        joinRoom(room);
+                    };
+                    li.appendChild(a);
+                    list.appendChild(li);
+                });
+            }
+            
+            function joinRoom(room) {
+                if (currentRoom) {
+                    socket.send(JSON.stringify({
+                        event: 'leave',
+                        data: currentRoom
+                    }));
+                }
+                
+                currentRoom = room;
+                document.getElementById('currentRoom').textContent = 'Room: ' + room;
+                document.getElementById('messages').innerHTML = '';
+                document.getElementById('message').disabled = false;
+                document.getElementById('send').disabled = false;
+                
+                socket.send(JSON.stringify({
+                    event: 'join',
+                    data: room
+                }));
+                
+                addSystemMessage('Joined room: ' + room);
+            }
+            
+            function showRoomHistory(data) {
+                if (data.room !== currentRoom) return;
+                
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = '';
+                
+                data.messages.forEach(msg => {
+                    addMessage(msg, false);
+                });
+                
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+            
+            function addMessage(msg, scroll = true) {
+                if (msg.room !== currentRoom) return;
+                
+                const messagesDiv = document.getElementById('messages');
+                const div = document.createElement('div');
+                
+                const time = new Date(msg.time * 1000).toLocaleTimeString();
+                div.innerHTML = '<strong>' + msg.username + '</strong>: ' + 
+                                msg.message + 
+                                ' <span class="timestamp">' + time + '</span>';
+                
+                messagesDiv.appendChild(div);
+                
+                if (scroll) {
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                }
+            }
+            
+            function addSystemMessage(message) {
+                const messagesDiv = document.getElementById('messages');
+                const div = document.createElement('div');
+                div.className = 'system';
+                div.textContent = message;
+                
+                messagesDiv.appendChild(div);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+            
+            document.getElementById('send').addEventListener('click', function() {
+                sendMessage();
+            });
+            
+            document.getElementById('message').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            document.getElementById('createRoom').addEventListener('click', function() {
+                const roomName = document.getElementById('newRoom').value.trim();
+                if (roomName) {
+                    joinRoom(roomName);
+                    document.getElementById('newRoom').value = '';
+                    
+                    
+                    const list = document.getElementById('roomList');
+                    let found = false;
+                    for (let i = 0; i < list.children.length; i++) {
+                        if (list.children[i].textContent === roomName) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!found) {
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = '#';
+                        a.textContent = roomName;
+                        a.onclick = function(e) {
+                            e.preventDefault();
+                            joinRoom(roomName);
+                        };
+                        li.appendChild(a);
+                        list.appendChild(li);
+                    }
+                }
+            });
+            
+            function sendMessage() {
+                if (!currentRoom) return;
+                
+                const messageInput = document.getElementById('message');
+                const username = document.getElementById('username').value.trim() || 'Anonymous';
+                const message = messageInput.value.trim();
+                
+                if (message) {
+                    socket.send(JSON.stringify({
+                        event: 'chat',
+                        data: {
+                            username: username,
+                            message: message,
+                            room: currentRoom,
+                            time: Math.floor(Date.now() / 1000)
+                        }
+                    }));
+                    
+                    messageInput.value = '';
+                }
+            }
+        });
+    </script>
+</body>
+</html> 

@@ -13,6 +13,7 @@ A high-performance, concurrent WebSocket and long-polling communication library 
 - **Event-Based API**: Simple and familiar event-based programming model
 - **Concurrent Message Processing**: Worker pools for efficient message distribution
 - **Type-Safe**: Fully typed Go implementation with thread safety
+- **Erlang-like Distributed System**: Robust process model with supervision trees and fault tolerance
 
 ## Installation
 
@@ -85,7 +86,10 @@ func main() {
 
 ## Documentation
 
-For complete documentation and examples, see [docs/howtouse.md](docs/howtouse.md).
+For complete documentation and examples:
+
+- [Basic Usage Guide](docs/howtouse.md) - Socket and room usage
+- [Distributed System](docs/distributed.md) - Erlang-like processes and supervision
 
 ## Performance
 
@@ -95,6 +99,12 @@ Socket.go is designed with performance as a primary goal:
 - **Memory Optimization**: Careful memory management with buffer pooling
 - **Minimal Overhead**: Lightweight design with minimal dependencies
 - **Scalable Architecture**: Can handle thousands of concurrent connections
+- **Robust Fault Tolerance**: Erlang-inspired supervision for self-healing systems
+
+## Examples
+
+- `examples/chat/` - Simple chat application
+- `examples/distributed-chat/` - Distributed chat with process supervision
 
 ## License
 
