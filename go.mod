@@ -1,4 +1,4 @@
-module github.com/kleeedolinux/socket.go
+module github.com/solviumdream/socket.go
 
 go 1.20
 

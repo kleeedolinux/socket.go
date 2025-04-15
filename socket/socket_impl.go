@@ -5,9 +5,9 @@ import (
 
 	"sync"
 
-	"github.com/kleeedolinux/socket.go/debug"
+	"github.com/solviumdream/socket.go/debug"
 
-	"github.com/kleeedolinux/socket.go/socket/transport"
+	"github.com/solviumdream/socket.go/socket/transport"
 )
 
 type socketImpl struct {

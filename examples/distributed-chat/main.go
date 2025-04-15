@@ -13,10 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kleeedolinux/socket.go/socket"
-	"github.com/kleeedolinux/socket.go/socket/distributed"
+	"github.com/solviumdream/socket.go/socket"
+	"github.com/solviumdream/socket.go/socket/distributed"
 )
-
 
 type ChatMessage struct {
 	Username string `json:"username"`
@@ -25,13 +24,11 @@ type ChatMessage struct {
 	Time     int64  `json:"time"`
 }
 
-
 type RoomState struct {
 	mu       sync.RWMutex
 	messages []ChatMessage
 	users    map[string]bool
 }
-
 
 type ChatState struct {
 	rooms map[string]*RoomState
@@ -70,7 +67,6 @@ func (s *ChatState) getRoomNames() []string {
 	return names
 }
 
-
 func roomManagerProcess(ctx context.Context, self distributed.ProcessID, node *distributed.Node, msg interface{}) error {
 	data, ok := msg.(map[string]interface{})
 	if !ok {
@@ -92,17 +88,14 @@ func roomManagerProcess(ctx context.Context, self distributed.ProcessID, node *d
 		room := data["room"].(string)
 		socketID := data["socket"].(string)
 
-		
 		node.Subscribe(self, room)
 
-		
 		server.BroadcastToRoom(room, "system", map[string]interface{}{
 			"message": "A user has joined the room",
 			"room":    room,
 			"count":   len(server.In(room)),
 		})
 
-		
 		if state, ok := data["state"].(*ChatState); ok {
 			roomState := state.getOrCreateRoom(room)
 			roomState.mu.RLock()
@@ -119,7 +112,6 @@ func roomManagerProcess(ctx context.Context, self distributed.ProcessID, node *d
 	case "room_leave":
 		room := data["room"].(string)
 
-		
 		server.BroadcastToRoom(room, "system", map[string]interface{}{
 			"message": "A user has left the room",
 			"room":    room,
@@ -129,10 +121,8 @@ func roomManagerProcess(ctx context.Context, self distributed.ProcessID, node *d
 	case "socket_disconnect":
 		socketID := data["socket"].(string)
 
-		
 		server.LeaveAll(socketID)
 
-		
 		rooms := server.RoomsOf(socketID)
 		for _, room := range rooms {
 			server.BroadcastToRoom(room, "system", map[string]interface{}{
@@ -169,25 +159,22 @@ func chatMessageProcess(ctx context.Context, self distributed.ProcessID, node *d
 			return fmt.Errorf("invalid chat message format")
 		}
 
-		
 		if chatMsg.Time == 0 {
 			chatMsg.Time = time.Now().Unix()
 		}
 
-		
 		if state, ok := data["state"].(*ChatState); ok {
-			
+
 			roomState := state.getOrCreateRoom(chatMsg.Room)
 			roomState.mu.Lock()
 			roomState.messages = append(roomState.messages, chatMsg)
-			
+
 			if len(roomState.messages) > 100 {
 				roomState.messages = roomState.messages[len(roomState.messages)-100:]
 			}
 			roomState.mu.Unlock()
 		}
 
-		
 		server.BroadcastToRoom(chatMsg.Room, "chat", chatMsg)
 	}
 
@@ -203,12 +190,10 @@ func processMessage(node *distributed.Node, roomManager distributed.ProcessID, c
 			return
 		}
 
-		
 		if node.SocketServer != nil {
 			node.SocketServer.Join(s.ID(), room)
 		}
 
-		
 		node.Send(roomManager, map[string]interface{}{
 			"type":   "room_join",
 			"socket": s.ID(),
@@ -223,12 +208,10 @@ func processMessage(node *distributed.Node, roomManager distributed.ProcessID, c
 			return
 		}
 
-		
 		if node.SocketServer != nil {
 			node.SocketServer.Leave(s.ID(), room)
 		}
 
-		
 		node.Send(roomManager, map[string]interface{}{
 			"type":   "room_leave",
 			"socket": s.ID(),
@@ -238,7 +221,6 @@ func processMessage(node *distributed.Node, roomManager distributed.ProcessID, c
 	case "chat":
 		var message ChatMessage
 
-		
 		if jsonData, err := json.Marshal(data); err == nil {
 			if err := json.Unmarshal(jsonData, &message); err != nil {
 				log.Printf("Error unmarshaling chat message: %v", err)
@@ -249,7 +231,6 @@ func processMessage(node *distributed.Node, roomManager distributed.ProcessID, c
 			return
 		}
 
-		
 		node.Send(chatProcessor, map[string]interface{}{
 			"type":    "chat_message",
 			"message": message,
@@ -268,10 +249,8 @@ func main() {
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	
 	chatState := newChatState()
 
-	
 	server := socket.NewServer(
 		socket.WithPingInterval(25*time.Second),
 		socket.WithPingTimeout(5*time.Second),
@@ -280,10 +259,8 @@ func main() {
 		socket.WithBufferSize(4096),
 	)
 
-	
 	node := distributed.NewNode("chat-node", distributed.WithSocketServer(server))
 
-	
 	supervisorSpec := distributed.SupervisorSpec{
 		ID:            "chat-supervisor",
 		Strategy:      distributed.OneForOne,
@@ -295,27 +272,22 @@ func main() {
 		},
 	}
 
-	
 	_, err := distributed.NewSupervisor(supervisorSpec, node)
 	if err != nil {
 		log.Fatalf("Failed to create supervisor: %v", err)
 	}
 
-	
 	roomManagerID := distributed.ProcessID("room-manager")
 	chatProcessorID := distributed.ProcessID("chat-processor")
 
-	
 	server.HandleFunc(socket.EventConnect, func(s socket.Socket, _ interface{}) {
 		log.Printf("Client connected: %s", s.ID())
 
-		
 		s.Send("system", map[string]interface{}{
 			"message": fmt.Sprintf("Welcome! You are connected with ID: %s", s.ID()),
 			"online":  server.Count(),
 		})
 
-		
 		s.Send("rooms", chatState.getRoomNames())
 	})
 
@@ -323,27 +295,23 @@ func main() {
 		log.Printf("Client disconnected: %s", s.ID())
 	})
 
-	
 	for _, event := range []socket.Event{"join", "leave", "chat", "get_rooms"} {
-		e := event 
+		e := event
 		server.HandleFunc(e, func(s socket.Socket, data interface{}) {
 			processMessage(node, roomManagerID, chatProcessorID, chatState, s, e, data)
 		})
 	}
 
-	
 	mux := http.NewServeMux()
 	mux.HandleFunc("/socket", server.HandleHTTP)
 	mux.HandleFunc("/socket/", server.HandleHTTP)
 	mux.HandleFunc("/", serveIndexFile)
 
-	
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", *port),
 		Handler: mux,
 	}
 
-	
 	go func() {
 		sigint := make(chan os.Signal, 1)
 		signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
@@ -372,11 +340,10 @@ func serveIndexFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	indexPath := "./examples/distributed-chat/index.html"
 
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		
+
 		indexPath = "./index.html"
 		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 			http.Error(w, "Could not find index.html", http.StatusInternalServerError)

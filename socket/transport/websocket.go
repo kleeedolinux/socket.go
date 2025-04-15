@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kleeedolinux/socket.go/debug"
+	"github.com/solviumdream/socket.go/debug"
 
 	"github.com/gorilla/websocket"
 )
